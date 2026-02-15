@@ -1,8 +1,7 @@
 # multi-factor-valuation-model
-Built a multi-factor stock valuation model in Python that automates intrinsic value estimation using real-time financial data. The model integrates DCF, capital structure analysis, profitability metrics, and scoring logic to produce structured buy/fair/sell signals. I have made it Tech-Savvy, as it uses pandas and Yfinance for data structuring and extraction.
+Built a multi-factor stock valuation model in Python that automates intrinsic value estimation using real-time financial data. The model integrates DCF, capital structure analysis, profitability metrics, and scoring logic to produce structured buy/fair/sell signals. I have made it Tech-Savvy by using pandas and Yfinance for data structuring and extraction.
 
 **Methodology Used**
-The model evaluates companies using:
 
 -*1️ Price-to-Book (P/B) Ratio:*
 Used with the ROE context to avoid misleading signals.

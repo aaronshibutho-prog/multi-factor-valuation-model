@@ -25,6 +25,19 @@ Enterprise value adjusted to equity value
 -*6️ Debt-to-Equity Ratio:*
 Balance sheet risk analysis.
 
+**Scoring Methodology & Weights**
+
+To ensure a balanced valuation, the model assigns weights to each factor based on its reliability as a value indicator:
+
+| Factor | Weight | Rationale |
+| :--- | :---: | :--- |
+| **DCF Intrinsic Value** | **40%** | The core fundamental value based on future cash flows. |
+| **Free Cash Flow Yield** | **20%** | Measures actual "cash-in-hand" relative to market cap. |
+| **PEG Ratio** | **15%** | Balances valuation with projected earnings growth. |
+| **Return on Equity (ROE)** | **10%** | Profitability efficiency check. |
+| **Price-to-Book (P/B)** | **10%** | Asset-based valuation (adjusted for sector norms). |
+| **Debt-to-Equity (D/E)** | **5%** | Risk multiplier; penalizes over-leveraged companies. |
+
 **How to Run This Project**
 
 -*Step 1: Clone the Repository:*

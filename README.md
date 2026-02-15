@@ -28,19 +28,19 @@ Balance sheet risk analysis.
 **How to Run This Project**
 
 -*Step 1: Clone the Repository:*
-```bash
-git clone https://github.com/aaronshibutho-prog/multi-factor-valuation-model.git
-cd multi-factor-valuation-model
+```bash git clone https://github.com/aaronshibutho-prog/multi-factor-valuation-model.git
+cd multi-factor-valuation-model  
+```
 Or download the ZIP file from GitHub and extract it.
 
 -*Step 2: Install Required Libraries:*
 ```bash
 pip install yfinance pandas
-
+```
 -*Step 3: Run the Script:*
 ```bash
 python valuation_model.py
-
+```
 -*Step 4: Enter Stock Ticker:*
 For Example: NVDA, AAPL, RELIANCE.NS or HDFCBANK.NS
 

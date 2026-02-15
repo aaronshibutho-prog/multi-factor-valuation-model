@@ -1,6 +1,7 @@
 # multi-factor-valuation-model
 Built a multi-factor stock valuation model in Python that automates intrinsic value estimation using real-time financial data. The model integrates DCF, capital structure analysis, profitability metrics, and scoring logic to produce structured buy/fair/sell signals. I have made it Tech-Savvy by using pandas and Yfinance for data structuring and extraction.
 
+
 **Methodology Used**
 
 -*1️ Price-to-Book (P/B) Ratio:*
@@ -25,18 +26,20 @@ Enterprise value adjusted to equity value
 -*6️ Debt-to-Equity Ratio:*
 Balance sheet risk analysis.
 
+
 **Scoring Methodology & Weights**
 
 To ensure a balanced valuation, the model assigns weights to each factor based on its reliability as a value indicator:
 
 | Factor | Weight | Rationale |
 | :--- | :---: | :--- |
-| **DCF Intrinsic Value** | **40%** | The core fundamental value based on future cash flows. |
-| **Free Cash Flow Yield** | **20%** | Measures actual "cash-in-hand" relative to market cap. |
-| **PEG Ratio** | **15%** | Balances valuation with projected earnings growth. |
+| **DCF Intrinsic Value** | **35%** | The core fundamental value based on future cash flows. |
+| **Free Cash Flow Yield** | **25%** | Measures actual "cash-in-hand" relative to market cap. |
+| **PEG Ratio** | **10%** | Balances valuation with projected earnings growth. |
 | **Return on Equity (ROE)** | **10%** | Profitability efficiency check. |
 | **Price-to-Book (P/B)** | **10%** | Asset-based valuation (adjusted for sector norms). |
-| **Debt-to-Equity (D/E)** | **5%** | Risk multiplier; penalizes over-leveraged companies. |
+| **Debt-to-Equity (D/E)** | **10%** | Risk multiplier; penalizes over-leveraged companies. |
+
 
 **How to Run This Project**
 
@@ -57,6 +60,7 @@ python valuation_model.py
 ```
 -*Step 4: Enter Stock Ticker:*
 For Example: NVDA, AAPL, RELIANCE.NS or HDFCBANK.NS
+
 
 **Disclaimer**
 

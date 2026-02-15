@@ -45,7 +45,9 @@ To ensure a balanced valuation, the model assigns weights to each factor based o
 
 -*Step 1: Clone the Repository:*
 ```bash
-git clone https://github.com/aaronshibutho-prog/multi-factor-valuation-model.git &&
+git clone https://github.com/aaronshibutho-prog/multi-factor-valuation-model.git
+```
+```bash
 cd multi-factor-valuation-model  
 ```
 Or download the ZIP file from GitHub and extract it.

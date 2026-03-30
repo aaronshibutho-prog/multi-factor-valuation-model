@@ -89,4 +89,41 @@ The model follows a broad pipeline like this:
 7. **Apply weighted scoring**
 8. **Generate final classification**
 
+---
+
+## Steps to Run the Project
+
+1. **Clone the repository:**
+   ```bash
+   git clone https://github.com/aaronshibutho-prog/propell-valuation-engine.git
+   cd propell-valuation-engine
+   or
+   Download the project files directly from the repository and keep them in the same folder.
+2. **Install the required dependencies manually:**
+   ```bash
+   pip install pandas numpy yfinance
+3. **Ensure all project files are in the same directory:**
+   *valuator.py*
+   *yfinextractor.py*
+   *peer_allocator.py*
+   *peer_accelerator.py*
+   *industry_ticks.xlsx*
+   *industry_ticks_weighted.xlsx*
+   *industry_quality_weights.xlsx*
+4.**Run the main valuation script:**
+   ```bash
+   python valuator.py
+5.**Enter the stock ticker like:**
+    ```bash
+    *NVDA*
+    *MSFT*
+    *AAPL*
+    *TSM*
+    
+--
+
+## Disclaimer
+
+This project is for educational and research purposes only.
+The valuation produced by this model is based on available financial data and model assumptions, both of which may change over time. It should not be considered financial advice, investment advice, or a recommendation to buy or sell any security. Always do your own research before making investment decisions.
 

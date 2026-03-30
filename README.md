@@ -3,8 +3,6 @@
 
 **A Python-based multi-factor stock valuation system that combines intrinsic valuation, peer comparison, financial quality analysis, and weighted scoring to classify stocks as undervalued, fairly valued, or overvalued.**
 
-A Python-based stock valuation engine that combines **intrinsic valuation**, **relative valuation**, and **financial quality analysis** to estimate whether a stock appears **undervalued, fairly valued, or overvalued**.
-
 This project is built to go beyond a single-ratio approach by using multiple valuation methods together, including **DCF**, **peer comparison**, **profitability metrics**, **cash flow analysis**, and **balance sheet strength**, to create a more structured and realistic view of valuation.
 
 ---

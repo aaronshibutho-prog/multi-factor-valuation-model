@@ -1,4 +1,4 @@
-# Equity Valuation Engine
+# Propell Equity Valuation Engine
 
 A Python-based stock valuation engine that combines **intrinsic valuation**, **relative valuation**, and **financial quality analysis** to estimate whether a stock appears **undervalued, fairly valued, or overvalued**.
 
@@ -12,7 +12,7 @@ Valuing a stock using only one metric can be misleading. A low P/E ratio may not
 
 The valuation engine:
 
-- Extracts financial data using `yfinance`
+- Extracts financial data using `yfinance.`
 - Performs **non-peer valuation**
 - Performs **peer-based valuation**
 - Evaluates **quality and financial health**
@@ -64,7 +64,7 @@ Evaluates the strength of the business using metrics such as:
 Instead of depending on one ratio, the model assigns weights to different metrics and produces a combined view.
 
 ### 5. Industry-Aware Logic
-Different industries may require different weights and interpretation. The model is designed to support:
+Different industries may require different weights and interpretations. The model is designed to support:
 
 - Industry-specific weights
 - Asset-intensity checks

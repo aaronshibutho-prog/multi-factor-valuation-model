@@ -1,4 +1,4 @@
-# ▲ Propell
+# 🚀 Propell
 ### Equity Valuation Engine
 
 **A Python-based multi-factor stock valuation system that combines intrinsic valuation, peer comparison, financial quality analysis, and weighted scoring to classify stocks as undervalued, fairly valued, or overvalued.**

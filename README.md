@@ -44,7 +44,6 @@ Compares a company against similar companies in its industry using:
 - PEG Ratio
 - P/B Ratio
 - EV/EBITDA
-- EV/EBIT
 - EV/Sales
 - P/FCF
 
@@ -53,12 +52,9 @@ Evaluates the strength of the business using metrics such as:
 
 - ROE
 - ROA
-- Operating Margin
-- Net Margin
 - Free Cash Flow Yield
 - Debt-to-Equity
 - Interest Coverage
-- Current Ratio
 - Asset quality indicators
 
 ### 4. Weighted Scoring System

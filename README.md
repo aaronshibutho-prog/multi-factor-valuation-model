@@ -1,4 +1,4 @@
-# Multi-Factor Stock Valuation Model
+# Equity Valuation Engine
 
 A Python-based stock valuation engine that combines **intrinsic valuation**, **relative valuation**, and **financial quality analysis** to estimate whether a stock appears **undervalued, fairly valued, or overvalued**.
 

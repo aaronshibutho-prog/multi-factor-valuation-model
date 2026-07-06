@@ -27,7 +27,7 @@ def industry_weight(stock):
             "EV/Sales": 1,
             "P/FCF": 1
         }
-
+#checking if it works
 def industry_quality_weight(stock):
     industry=stock.info.get('industry')
     weight_df = pd.read_excel('industry_quality_weights.xlsx')

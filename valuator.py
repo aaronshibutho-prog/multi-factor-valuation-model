@@ -187,12 +187,21 @@ def p_fcf_calculator(stock, cashflow):
 def discounted_cash_flow_calculator(stock, cashflow, financials, balance_sheet):
     free_cash_flow_to_equity = None
     free_cash_flow_to_firm = None
-    int_expense=abs(financials.loc['Interest Expense'].iloc[0])
-    if pd.isna(int_expense): int_expense=0
-    issued_debt=cashflow.loc['Issuance Of Debt'].iloc[0]
-    if pd.isna(issued_debt): issued_debt=0
-    repayed_debt=abs(cashflow.loc['Repayment Of Debt'].iloc[0])
-    if pd.isna(repayed_debt): repayed_debt=0
+    try:
+        int_expense=abs(financials.loc['Interest Expense'].iloc[0])
+        if pd.isna(int_expense): int_expense=0
+    except (KeyError, IndexError):
+        int_expense=0
+    try:
+        issued_debt=cashflow.loc['Issuance Of Debt'].iloc[0]
+        if pd.isna(issued_debt): issued_debt=0
+    except (KeyError, IndexError):
+        issued_debt=0
+    try:
+        repayed_debt=abs(cashflow.loc['Repayment Of Debt'].iloc[0])
+        if pd.isna(repayed_debt): repayed_debt=0
+    except (KeyError, IndexError):
+        repayed_debt=0
     try:
         tax_rate = financials.loc['Tax Provision'].iloc[0] / financials.loc['Pretax Income'].iloc[0]
         if tax_rate < 0 or tax_rate > 1:
@@ -211,7 +220,10 @@ def discounted_cash_flow_calculator(stock, cashflow, financials, balance_sheet):
         try:
             free_cash_flow_to_firm=financials.loc['EBIT'].iloc[0] * (1 - tax_rate) + cashflow.loc['Depreciation And Amortization'].iloc[0] - abs(cashflow.loc['Capital Expenditure'].iloc[0]) - cashflow.loc['Change In Working Capital'].iloc[0]
         except:
-            free_cash_flow_to_firm=cashflow.loc['Operating Cash Flow'].iloc[0] + int_expense * (1 - tax_rate) - abs(cashflow.loc['Capital Expenditure'].iloc[0])
+            try:
+                free_cash_flow_to_firm=cashflow.loc['Operating Cash Flow'].iloc[0] + int_expense * (1 - tax_rate) - abs(cashflow.loc['Capital Expenditure'].iloc[0])
+            except:
+                free_cash_flow_to_firm=None
     if free_cash_flow_to_equity is not None and pd.notna(free_cash_flow_to_equity):
         tnx = yf.Ticker("^TNX")
         if tnx.fast_info['last_price'] / 100 is not None and tnx.fast_info['last_price'] / 100 > 0 and pd.notna(tnx.fast_info['last_price'] / 100):
@@ -321,23 +333,43 @@ def discounted_cash_flow_calculator(stock, cashflow, financials, balance_sheet):
     else: return None
 
 def asset_quality_calculator(stock, cashflow,financials, balance_sheet):
-    cy_revenue=financials.loc['Total Revenue'].iloc[0]
-    py_revenue=financials.loc['Total Revenue'].iloc[1]
-    cy_Receivables=balance_sheet.loc['Receivables'].iloc[0]
-    py_Receivables=balance_sheet.loc['Receivables'].iloc[1]
+    try:
+        cy_revenue=financials.loc['Total Revenue'].iloc[0]
+        py_revenue=financials.loc['Total Revenue'].iloc[1]
+    except (KeyError, IndexError):
+        cy_revenue=None
+        py_revenue=None
+    try:
+        cy_Receivables=balance_sheet.loc['Receivables'].iloc[0]
+        py_Receivables=balance_sheet.loc['Receivables'].iloc[1]
+    except (KeyError, IndexError):
+        cy_Receivables=None
+        py_Receivables=None
     try:
         cy_inventory = balance_sheet.loc['Inventory'].iloc[0]
         py_inventory = balance_sheet.loc['Inventory'].iloc[1]
-    except:
+    except (KeyError, IndexError):
         cy_inventory = None
         py_inventory = None
-    total_assets=balance_sheet.loc['Total Assets'].iloc[0]
-    net_income=financials.loc['Net Income'].iloc[0]
-    EBIT=financials.loc['EBIT'].iloc[0]
-    tax_expense=financials.loc['Tax Provision'].iloc[0]
-    pretax_income=financials.loc['Pretax Income'].iloc[0]
-    nopat=EBIT * (1 - (tax_expense / pretax_income))
-    invested_capital=balance_sheet.loc['Total Debt'].iloc[0] + balance_sheet.loc['Stockholders Equity'].iloc[0] - balance_sheet.loc['Cash And Cash Equivalents'].iloc[0]
+    try:
+        total_assets=balance_sheet.loc['Total Assets'].iloc[0]
+    except (KeyError, IndexError):
+        total_assets=None
+    try:
+        net_income=financials.loc['Net Income'].iloc[0]
+    except (KeyError, IndexError):
+        net_income=None
+    try:
+        EBIT=financials.loc['EBIT'].iloc[0]
+        tax_expense=financials.loc['Tax Provision'].iloc[0]
+        pretax_income=financials.loc['Pretax Income'].iloc[0]
+        nopat=EBIT * (1 - (tax_expense / pretax_income))
+    except (KeyError, IndexError, ZeroDivisionError, TypeError):
+        nopat=None
+    try:
+        invested_capital=balance_sheet.loc['Total Debt'].iloc[0] + balance_sheet.loc['Stockholders Equity'].iloc[0] - balance_sheet.loc['Cash And Cash Equivalents'].iloc[0]
+    except (KeyError, IndexError):
+        invested_capital=None
     if pd.notna(net_income) and pd.notna(total_assets):
         roa=float(net_income / total_assets)
     elif stock.info.get('returnOnAssets') is not None and pd.notna(stock.info.get('returnOnAssets')):
@@ -479,8 +511,8 @@ if peers is not None and len(peers) > 0:
     ev_sales_median = peer['EV/Sales'].median()
     p_fcf_median = peer['P/FCF'].median()
     weights=industry_weight(stk)
-    peer_pe = peer_equity['PEG Ratio'].iloc[0]
-    if pd.notna(peer_pe) and peg_median is not None and pd.notna(peg_median):
+    peer_pe = peer_equity['P/E Ratio'].iloc[0]
+    if pd.notna(peer_pe) and pe_median is not None and pd.notna(pe_median):
         if peer_equity['P/E Ratio'].iloc[0] > pe_median * 1.05:
             peer_over += weights['P/E Ratio']
         elif peer_equity['P/E Ratio'].iloc[0] < pe_median * 0.95:
@@ -688,17 +720,17 @@ if peers is not None and len(peers) > 0:
                 final_label = "Fair / Inconclusive"
                 final_message = "The stock appears roughly fairly valued or has mixed signals without a clear edge."
 
-    print(f"\n----- {stk.ticker} VALUATION SUMMARY -----")
-    print(f"Peer View       : {peer_label}")
-    print(f"Quality View    : {quality_label}")
-    print(f"DCF View        : {dcf_label} ({dcf_text})")
-    print(f"Peer Score      : {peer_score:.2f}")
-    print(f"Quality Score   : {quality_score:.2f}")
-    print(f"DCF Score       : {dcf_score:.2f}")
-    print(f"Final Score     : {final_score:.2f}")
-    print(f"Final Verdict   : {final_label}")
-    print(f"Interpretation  : {final_message}")
-        
+        print(f"\n----- {stk.ticker} VALUATION SUMMARY -----")
+        print(f"Peer View       : {peer_label}")
+        print(f"Quality View    : {quality_label}")
+        print(f"DCF View        : {dcf_label} ({dcf_text})")
+        print(f"Peer Score      : {peer_score:.2f}")
+        print(f"Quality Score   : {quality_score:.2f}")
+        print(f"DCF Score       : {dcf_score:.2f}")
+        print(f"Final Score     : {final_score:.2f}")
+        print(f"Final Verdict   : {final_label}")
+        print(f"Interpretation  : {final_message}")
+
 
 else:
     equity= pd.DataFrame(columns=['Ticker', 'DCF Valuation (%)', 'ROA', 'ROIC', 'Asset Turnover', 'Receivable Stress', 'Inventory Stress', 'FCF Yield', 'Debt to Equity Ratio', 'Interest Coverage'])

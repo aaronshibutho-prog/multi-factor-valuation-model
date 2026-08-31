@@ -225,10 +225,7 @@ def discounted_cash_flow_calculator(stock, cashflow, financials, balance_sheet):
             except:
                 free_cash_flow_to_firm=None
     if free_cash_flow_to_equity is not None and pd.notna(free_cash_flow_to_equity):
-        tnx = yf.Ticker("^TNX")
-        if tnx.fast_info['last_price'] / 100 is not None and tnx.fast_info['last_price'] / 100 > 0 and pd.notna(tnx.fast_info['last_price'] / 100):
-            r_f=tnx.fast_info['lastPrice'] / 100
-        else: r_f=0.0425
+        r_f = get_risk_free_rate(stock)
         equity_risk_premium=0.045
         beta=stock.info.get('beta')
         if beta is not None and pd.notna(beta):
@@ -283,10 +280,7 @@ def discounted_cash_flow_calculator(stock, cashflow, financials, balance_sheet):
         if (market_capital + total_debt) > 0:
             equity_weight= market_capital / (market_capital + total_debt)
             debt_weight= total_debt / (market_capital + total_debt)
-        tnx = yf.Ticker("^TNX")
-        if tnx.fast_info['last_price'] / 100 is not None and tnx.fast_info['last_price'] / 100 > 0 and pd.notna(tnx.fast_info['last_price'] / 100):
-            r_f=tnx.fast_info['last_price'] / 100
-        else: r_f=0.0425
+        r_f = get_risk_free_rate(stock)
         equity_risk_premium=0.045
         beta=stock.info.get('beta')
         if beta is not None and pd.notna(beta):
@@ -434,6 +428,18 @@ def interest_coverage_calculator(stock, financials):
         interest_coverage=stock.info.get('interestCoverage')
     else: interest_coverage=None
     return interest_coverage
+def get_risk_free_rate(stock):
+    is_india = stock.ticker.endswith('.NS')
+    if is_india:
+        return 0.069  # India 10Y G-Sec fallback — update periodically, no live yfinance source
+    tnx = yf.Ticker("^TNX")
+    try:
+        rate = tnx.fast_info['lastPrice'] / 100
+        if rate is not None and rate > 0 and pd.notna(rate):
+            return rate
+    except Exception:
+        pass
+    return 0.0425
 
 if peers is not None and len(peers) > 0:
     peer_over=0

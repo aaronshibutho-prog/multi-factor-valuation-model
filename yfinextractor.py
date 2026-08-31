@@ -18,7 +18,8 @@ def inform(ticker):
     cf = cf.iloc[:, :4]
     return(stk,bs,fin,cf)
 if __name__ == "__main__":
-    print("Enter the Stock Ticker (e.g., AAPL or RELIANCE.NS):")    name=input().strip().upper()
+    print("Enter the Stock Ticker (e.g., AAPL or RELIANCE.NS):")
+    name=input().strip().upper()
     stk, bs, fin, cf = inform(name)
     print(f"Balance Sheet of {name}:")
     print(bs)

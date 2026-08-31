@@ -1,6 +1,7 @@
 import pandas as pd
 import yfinance as yf
 import time
+from yfinextractor import fetch_with_retry
 pd.set_option('display.max_rows', None)
 pd.set_option('display.max_columns', None)
 pd.set_option('display.width', None)
@@ -18,13 +19,10 @@ df = df[df['Symbol'] != 'File Creation Time']
 print("Processing tickers to retrieve industry information...")
 for i in range(len(df)):
     symbol=df['Symbol'].iloc[i]
-    try:
-        ticker = yf.Ticker(symbol)
-        indus = ticker.info.get('industry')
-        if indus is not None:
-            results.append({'Symbol': symbol, 'Industry': indus})
-    except:
-        continue
+    ticker = yf.Ticker(symbol)
+    indus = fetch_with_retry(lambda: ticker.info.get('industry'), label=symbol)
+    if indus is not None:
+        results.append({'Symbol': symbol, 'Industry': indus})
     time.sleep(0.1)
 df3 = pd.DataFrame(results)
 df3.to_excel('industry_ticks.xlsx', index=False)

@@ -1,5 +1,5 @@
 import pandas as pd
-from yfinextractor import inform
+from yfinextractor import inform, fetch_with_retry
 import yfinance as yf
 print("Enter the Stock Ticker (e.g., AAPL or RELIANCE.NS):")
 name = input().strip().upper()
@@ -25,17 +25,14 @@ else:
     for i in range(len(company_industry)):
         if company_industry['Industry'].iloc[i] == industry:
             peer_info = yf.Ticker(company_industry['Symbol'].iloc[i])
-            try:
-                peer_mark_cap = peer_info.info.get('marketCap')
-            except Exception:
-                continue
+            peer_mark_cap = fetch_with_retry(lambda: peer_info.info.get('marketCap'), label=peer_info.ticker)
             if peer_mark_cap is None:
                 continue
             if target_market == 'IN':
                 peer_mark_cap = peer_mark_cap / fx
             if peer_info.ticker == stk.ticker:
                 continue
-            if peer_mark_cap >= 200_000_000_000 and mark_cap >= 200_000_000_000:
+            if mark_cap >= 200_000_000_000 and peer_mark_cap >= 50_000_000_000:
                 peers.append(peer_info.ticker)
             elif 10_000_000_000 <= peer_mark_cap < 200_000_000_000 and 10_000_000_000 <= mark_cap < 200_000_000_000:
                 peers.append(peer_info.ticker)

@@ -1,10 +1,22 @@
 import yfinance as yf
 import pandas as pd
+import time
 pd.options.display.float_format = '{:,.0f}'.format
 pd.set_option('display.max_rows', None)
 pd.set_option('display.max_columns', None)
 pd.set_option('display.width', None)
 pd.set_option('display.max_colwidth', None)
+
+def fetch_with_retry(fn, *args, retries=3, base_delay=1.5, label=None, **kwargs):
+    for attempt in range(retries):
+        try:
+            return fn(*args, **kwargs)
+        except Exception as e:
+            if attempt == retries - 1:
+                print(f"Skipped {label or args}: {e}")
+                return None
+            time.sleep(base_delay * (2 ** attempt))
+
 def inform(ticker):
     stk=yf.Ticker(ticker)
     bs=stk.balance_sheet

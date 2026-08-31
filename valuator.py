@@ -27,12 +27,80 @@ def industry_weight(stock):
             "EV/Sales": 1,
             "P/FCF": 1
         }
+STANDARD_QUALITY_THRESHOLDS = {
+    "ROA": (0.10, 0.05),
+    "ROIC": (0.15, 0.08),
+    "Asset Turnover": (1.0, 0.5),
+    "Receivable Stress": (0.10, 0.20),
+    "Inventory Stress": (0.10, 0.20),
+    "FCF Yield": (0.05, 0.02),
+    "Debt to Equity Ratio": (0.5, 1.5),
+    "Interest Coverage": (5, 2)
+}
+
+QUALITY_THRESHOLD_PROFILES = {
+    "standard": STANDARD_QUALITY_THRESHOLDS,
+    "leverage_financial": {
+        "ROA": (0.012, 0.006),
+        "Debt to Equity Ratio": (2.0, 6.0),
+        "Interest Coverage": (2.0, 1.0)
+    },
+    "capital_intensive": {
+        "ROA": (0.03, 0.015),
+        "ROIC": (0.08, 0.05),
+        "Asset Turnover": (0.5, 0.25),
+        "FCF Yield": (0.04, 0.015),
+        "Debt to Equity Ratio": (1.5, 3.0),
+        "Interest Coverage": (2.5, 1.5)
+    },
+    "cyclical_commodity": {
+        "ROA": (0.08, 0.02),
+        "ROIC": (0.12, 0.05),
+        "Asset Turnover": (0.6, 0.3),
+        "Inventory Stress": (0.15, 0.30),
+        "FCF Yield": (0.06, 0.01),
+        "Debt to Equity Ratio": (0.6, 1.5),
+        "Interest Coverage": (4, 2)
+    },
+    "early_stage_burn": {
+        "ROA": (0.0, -0.15),
+        "ROIC": (0.0, -0.15),
+        "Asset Turnover": (0.3, 0.1),
+        "FCF Yield": (-0.05, -0.20),
+        "Debt to Equity Ratio": (0.3, 1.0),
+        "Interest Coverage": (3, 1)
+    }
+}
+
+ARCHETYPE_QUALITY_PROFILE = {
+    "Consumer Discretionary & Services": "standard",
+    "Consumer Staples": "standard",
+    "Industrials & Transportation": "standard",
+    "Healthcare Profitable": "standard",
+    "Semis & Hardware": "standard",
+    "Software & Internet": "standard",
+    "Media & Telecom": "standard",
+    "Shell/No Meaningful Fundamentals": "standard",
+    "Banks": "leverage_financial",
+    "Diversified Financials": "capital_intensive",
+    "REIT/Real Estate": "capital_intensive",
+    "Utilities": "capital_intensive",
+    "Energy": "cyclical_commodity",
+    "Materials & Mining": "cyclical_commodity",
+    "Biotech/Early-Stage Life Science": "early_stage_burn"
+}
+
+def resolve_quality_thresholds(archetype):
+    profile_name = ARCHETYPE_QUALITY_PROFILE.get(archetype, "standard")
+    profile = QUALITY_THRESHOLD_PROFILES.get(profile_name, STANDARD_QUALITY_THRESHOLDS)
+    return {**STANDARD_QUALITY_THRESHOLDS, **profile}
+
 def industry_quality_weight(stock):
     industry=stock.info.get('industry')
     weight_df = pd.read_excel('industry_quality_weights.xlsx')
     row = weight_df[weight_df['Industry'] == industry]
     if not row.empty:
-        return {
+        weights = {
             "ROA": row["ROA %"].iloc[0] / 100,
             "ROIC": row["ROIC %"].iloc[0] / 100,
             "Asset Turnover": row["Asset Turnover %"].iloc[0] / 100,
@@ -42,8 +110,9 @@ def industry_quality_weight(stock):
             "Debt to Equity Ratio": row["Debt to Equity Ratio %"].iloc[0] / 100,
             "Interest Coverage": row["Interest Coverage %"].iloc[0] / 100
         }
+        thresholds = resolve_quality_thresholds(row["Archetype"].iloc[0])
     else:
-        return {
+        weights = {
             "ROA": 2,
             "ROIC": 3,
             "Asset Turnover": 2,
@@ -53,7 +122,36 @@ def industry_quality_weight(stock):
             "Debt to Equity Ratio": 2,
             "Interest Coverage": 2
         }
-    
+        thresholds = STANDARD_QUALITY_THRESHOLDS
+    return weights, thresholds
+
+def score_quality_metrics(equity_row, quality_weights, quality_thresholds):
+    quality_good = 0
+    quality_bad = 0
+    quality_neutral = 0
+    higher_is_better = {"ROA", "ROIC", "Asset Turnover", "FCF Yield", "Interest Coverage"}
+    for metric in quality_thresholds:
+        value = equity_row[metric].iloc[0]
+        if not pd.notna(value):
+            continue
+        good_cutoff, bad_cutoff = quality_thresholds[metric]
+        if metric in higher_is_better:
+            if value >= good_cutoff:
+                quality_good += quality_weights[metric]
+            elif value < bad_cutoff:
+                quality_bad += quality_weights[metric]
+            else:
+                quality_neutral += quality_weights[metric]
+        else:
+            if value <= good_cutoff:
+                quality_good += quality_weights[metric]
+            elif value > bad_cutoff:
+                quality_bad += quality_weights[metric]
+            else:
+                quality_neutral += quality_weights[metric]
+    return quality_good, quality_bad, quality_neutral
+
+
 def pe_ratio_calculator(stock, financials):
     try:
         try:
@@ -184,6 +282,37 @@ def p_fcf_calculator(stock, cashflow):
     else: p_fcf=None
     return p_fcf
 
+def average_period_growth(financials, row_label):
+    try:
+        series = financials.loc[row_label]
+    except (KeyError, IndexError):
+        return None
+    growth_rates = []
+    for i in range(len(series) - 1):
+        current, prior = series.iloc[i], series.iloc[i + 1]
+        if pd.notna(current) and pd.notna(prior) and prior > 0:
+            growth_rates.append((current - prior) / prior)
+    if len(growth_rates) < 2:
+        return None
+    return sum(growth_rates) / len(growth_rates)
+
+def estimate_growth_rate(stock, financials):
+    growth_rate = average_period_growth(financials, 'Total Revenue')
+    if growth_rate is None or growth_rate <= 0:
+        alt_growth_rate = average_period_growth(financials, 'Net Income Common Stockholders')
+        if alt_growth_rate is None:
+            alt_growth_rate = average_period_growth(financials, 'Net Income')
+        if alt_growth_rate is not None and alt_growth_rate > 0:
+            growth_rate = alt_growth_rate
+    if growth_rate is None or growth_rate <= 0:
+        if stock.info.get('earningsGrowth') is not None and stock.info.get('earningsGrowth') > 0 and pd.notna(stock.info.get('earningsGrowth')):
+            growth_rate = stock.info.get('earningsGrowth')
+        elif stock.info.get('revenueGrowth') is not None and stock.info.get('revenueGrowth') > 0 and pd.notna(stock.info.get('revenueGrowth')):
+            growth_rate = stock.info.get('revenueGrowth')
+        else:
+            growth_rate = 0.08
+    return min(growth_rate, 0.12)
+
 def discounted_cash_flow_calculator(stock, cashflow, financials, balance_sheet):
     free_cash_flow_to_equity = None
     free_cash_flow_to_firm = None
@@ -239,12 +368,7 @@ def discounted_cash_flow_calculator(stock, cashflow, financials, balance_sheet):
             beta=df["stock_return"].cov(df["market_return"]) / df["market_return"].var()
             cost_of_equity=r_f + beta * equity_risk_premium
         discount_rate=cost_of_equity
-        if stock.info.get('earningsGrowth') is not None and stock.info.get('earningsGrowth') > 0 and pd.notna(stock.info.get('earningsGrowth')):
-            growth_rate=stock.info.get('earningsGrowth')
-        elif stock.info.get('revenueGrowth') is not None and stock.info.get('revenueGrowth') > 0 and pd.notna(stock.info.get('revenueGrowth')):
-            growth_rate=stock.info.get('revenueGrowth')
-        else: growth_rate=0.08
-        growth_rate = min(growth_rate, 0.12)
+        growth_rate = estimate_growth_rate(stock, financials)
         terminal_growth_rate = 0.025
         projection_years=5
         projected_fcfe=[]
@@ -295,12 +419,7 @@ def discounted_cash_flow_calculator(stock, cashflow, financials, balance_sheet):
             cost_of_equity=r_f + beta * equity_risk_premium
         wacc= (equity_weight * cost_of_equity) + (debt_weight * after_tax_cost_of_debt)
         discount_rate=wacc
-        if stock.info.get('earningsGrowth') is not None and stock.info.get('earningsGrowth') > 0 and pd.notna(stock.info.get('earningsGrowth')):
-            growth_rate=stock.info.get('earningsGrowth')
-        elif stock.info.get('revenueGrowth') is not None and stock.info.get('revenueGrowth') > 0 and pd.notna(stock.info.get('revenueGrowth')):
-            growth_rate=stock.info.get('revenueGrowth')
-        else: growth_rate=0.08
-        growth_rate = min(growth_rate, 0.12)
+        growth_rate = estimate_growth_rate(stock, financials)
         terminal_growth_rate = 0.025
         projection_years=5
         projected_fcff=[]
@@ -441,468 +560,216 @@ def get_risk_free_rate(stock):
         pass
     return 0.0425
 
-if peers is not None and len(peers) > 0:
-    peer_over=0
-    peer_under=0
-    peer_fair=0
-    peer = pd.DataFrame(columns=['Ticker', 'P/E Ratio', 'P/B Ratio', 'Forward P/E Ratio', 'PEG Ratio', 'EV/EBITDA', 'EV/Sales', 'P/FCF'])
-    equity= pd.DataFrame(columns=['Ticker', 'DCF Valuation (%)', 'ROA', 'ROIC', 'Asset Turnover', 'Receivable Stress', 'Inventory Stress', 'FCF Yield', 'Debt to Equity Ratio', 'Interest Coverage'])
-    peer_equity = pd.DataFrame(columns=['Ticker', 'P/E Ratio', 'P/B Ratio', 'Forward P/E Ratio', 'PEG Ratio', 'EV/EBITDA', 'EV/Sales', 'P/FCF'])
-    equity_pe_ratio=pe_ratio_calculator(stk, fin)
-    equity_pb_ratio=pb_ratio_calculator(stk, bs)
-    equity_forward_pe_ratio=forward_pe_ratio_calculator(stk)
-    equity_peg_ratio=peg_ratio_calculator(stk)
-    equity_ev_to_ebitda=ev_to_ebitda_calculator(stk, fin)
-    equity_ev_sales=ev_sales_calculator(stk, fin)
-    equity_p_fcf=p_fcf_calculator(stk, cf)
-    new_row= {
-        'Ticker': stk.ticker,
-        'P/E Ratio': equity_pe_ratio,
-        'P/B Ratio': equity_pb_ratio,
-        'Forward P/E Ratio': equity_forward_pe_ratio,
-        'PEG Ratio': equity_peg_ratio,
-        'EV/EBITDA': equity_ev_to_ebitda,
-        'EV/Sales': equity_ev_sales,
-        'P/FCF': equity_p_fcf
+VALUATION_RATIO_COLUMNS = ['Ticker', 'P/E Ratio', 'P/B Ratio', 'Forward P/E Ratio', 'PEG Ratio', 'EV/EBITDA', 'EV/Sales', 'P/FCF']
+QUALITY_METRIC_COLUMNS = ['Ticker', 'DCF Valuation (%)', 'ROA', 'ROIC', 'Asset Turnover', 'Receivable Stress', 'Inventory Stress', 'FCF Yield', 'Debt to Equity Ratio', 'Interest Coverage']
+
+def build_valuation_ratios_row(ticker_label, stock, financials, balance_sheet, cashflow):
+    return {
+        'Ticker': ticker_label,
+        'P/E Ratio': pe_ratio_calculator(stock, financials),
+        'P/B Ratio': pb_ratio_calculator(stock, balance_sheet),
+        'Forward P/E Ratio': forward_pe_ratio_calculator(stock),
+        'PEG Ratio': peg_ratio_calculator(stock),
+        'EV/EBITDA': ev_to_ebitda_calculator(stock, financials),
+        'EV/Sales': ev_sales_calculator(stock, financials),
+        'P/FCF': p_fcf_calculator(stock, cashflow)
     }
-    peer_equity = pd.concat([peer_equity, pd.DataFrame([new_row])], ignore_index=True)
-    for ticker in peers:
+
+def build_equity_dataframe(ticker_label, stock, financials, balance_sheet, cashflow):
+    equity_dcf = discounted_cash_flow_calculator(stock, cashflow, financials, balance_sheet)
+    roa, roic, asset_turnover, receivable_stress, inventory_stress = asset_quality_calculator(stock, cashflow, financials, balance_sheet)
+    row = {
+        'Ticker': ticker_label,
+        'DCF Valuation (%)': equity_dcf,
+        'ROA': roa,
+        'ROIC': roic,
+        'Asset Turnover': asset_turnover,
+        'Receivable Stress': receivable_stress,
+        'Inventory Stress': inventory_stress,
+        'FCF Yield': fcf_yield_calculator(stock, cashflow),
+        'Debt to Equity Ratio': Debt_to_Equity_calculator(stock, balance_sheet),
+        'Interest Coverage': interest_coverage_calculator(stock, financials)
+    }
+    equity = pd.DataFrame([row], columns=QUALITY_METRIC_COLUMNS)
+    equity = equity.dropna(subset=QUALITY_METRIC_COLUMNS[1:], how='all')
+    return equity, equity_dcf
+
+def compute_peer_score(peer_equity, peer, weights):
+    peer_over = peer_under = peer_fair = 0
+    for metric in VALUATION_RATIO_COLUMNS[1:]:
+        value = peer_equity[metric].iloc[0]
+        median = peer[metric].median()
+        if pd.notna(value) and median is not None and pd.notna(median):
+            if value > median * 1.05:
+                peer_over += weights[metric]
+            elif value < median * 0.95:
+                peer_under += weights[metric]
+            else:
+                peer_fair += weights[metric]
+    peer_total = peer_under + peer_over + peer_fair
+    return (peer_under - peer_over) / peer_total if peer_total != 0 else None
+
+def compute_peer_relative_valuation(stock, peer_tickers, financials, balance_sheet, cashflow):
+    peer_equity = pd.DataFrame([build_valuation_ratios_row(stock.ticker, stock, financials, balance_sheet, cashflow)], columns=VALUATION_RATIO_COLUMNS)
+    peer_rows = []
+    for ticker in peer_tickers:
         peer_info = yf.Ticker(ticker)
         peer_bs = peer_info.balance_sheet
         peer_fin = peer_info.financials
         peer_cf = peer_info.cashflow
-        peer_pe_ratio=pe_ratio_calculator(peer_info, peer_fin)
-        peer_pb_ratio=pb_ratio_calculator(peer_info, peer_bs)
-        peer_forward_pe_ratio=forward_pe_ratio_calculator(peer_info)
-        peer_peg_ratio = peg_ratio_calculator(peer_info)
-        peer_ev_to_ebitda=ev_to_ebitda_calculator(peer_info, peer_fin)
-        peer_ev_sales=ev_sales_calculator(peer_info, peer_fin)
-        peer_p_fcf=p_fcf_calculator(peer_info, peer_cf)
-        new_row = {
-            'Ticker': ticker,
-            'P/E Ratio': peer_pe_ratio,
-            'P/B Ratio': peer_pb_ratio,
-            'Forward P/E Ratio': peer_forward_pe_ratio,
-            'PEG Ratio': peer_peg_ratio,
-            'EV/EBITDA': peer_ev_to_ebitda,
-            'EV/Sales': peer_ev_sales,
-            'P/FCF': peer_p_fcf
-        }
-        peer = pd.concat([peer, pd.DataFrame([new_row])], ignore_index=True)
-    equity_dcf = discounted_cash_flow_calculator(stk, cf, fin, bs)
-    equity_roa, equity_roic, equity_asset_turnover, equity_receivable_stress, equity_inventory_stress = asset_quality_calculator(stk, cf, fin, bs)
-    equity_fcf_yield = fcf_yield_calculator(stk, cf)
-    equity_debt_to_equity = Debt_to_Equity_calculator(stk, bs)
-    equity_interest_coverage = interest_coverage_calculator(stk, fin)
-    new_row = {
-        'Ticker': stk.ticker,
-        'DCF Valuation (%)': equity_dcf,
-        'ROA': equity_roa,
-        'ROIC': equity_roic,
-        'Asset Turnover': equity_asset_turnover,
-        'Receivable Stress': equity_receivable_stress,
-        'Inventory Stress': equity_inventory_stress,
-        'FCF Yield': equity_fcf_yield,
-        'Debt to Equity Ratio': equity_debt_to_equity,
-        'Interest Coverage': equity_interest_coverage
-    }
-    equity = pd.concat([equity, pd.DataFrame([new_row])], ignore_index=True)
-    equity=equity.dropna(subset=['DCF Valuation (%)', 'ROA', 'ROIC', 'Asset Turnover', 'Receivable Stress', 'Inventory Stress', 'FCF Yield', 'Debt to Equity Ratio', 'Interest Coverage'], how='all')
-    peer=peer.dropna(subset=['P/E Ratio', 'P/B Ratio', 'Forward P/E Ratio', 'PEG Ratio', 'EV/EBITDA', 'EV/Sales', 'P/FCF'], how='all')
-    pe_median= peer['P/E Ratio'].median()
-    pb_median = peer['P/B Ratio'].median()
-    forward_pe_median = peer['Forward P/E Ratio'].median()
-    peg_median = peer['PEG Ratio'].median()
-    ev_ebitda_median = peer['EV/EBITDA'].median()
-    ev_sales_median = peer['EV/Sales'].median()
-    p_fcf_median = peer['P/FCF'].median()
-    weights=industry_weight(stk)
-    peer_pe = peer_equity['P/E Ratio'].iloc[0]
-    if pd.notna(peer_pe) and pe_median is not None and pd.notna(pe_median):
-        if peer_equity['P/E Ratio'].iloc[0] > pe_median * 1.05:
-            peer_over += weights['P/E Ratio']
-        elif peer_equity['P/E Ratio'].iloc[0] < pe_median * 0.95:
-            peer_under += weights['P/E Ratio']
-        else: peer_fair += weights['P/E Ratio']
-    peer_pb = peer_equity['P/B Ratio'].iloc[0]
-    if pd.notna(peer_pb) and pb_median is not None and pd.notna(pb_median):
-        if peer_equity['P/B Ratio'].iloc[0] > pb_median * 1.05:
-            peer_over += weights['P/B Ratio']
-        elif peer_equity['P/B Ratio'].iloc[0] < pb_median * 0.95:
-            peer_under += weights['P/B Ratio']
-        else: peer_fair += weights['P/B Ratio']
-    peer_forward_pe = peer_equity['Forward P/E Ratio'].iloc[0]
-    if pd.notna(peer_forward_pe) and forward_pe_median is not None and pd.notna(forward_pe_median):   
-        if peer_equity['Forward P/E Ratio'].iloc[0] > forward_pe_median * 1.05:
-            peer_over += weights['Forward P/E Ratio']
-        elif peer_equity['Forward P/E Ratio'].iloc[0] < forward_pe_median * 0.95:
-            peer_under += weights['Forward P/E Ratio']
-        else: peer_fair += weights['Forward P/E Ratio']
-    peer_peg = peer_equity['PEG Ratio'].iloc[0]
-    if pd.notna(peer_peg) and peg_median is not None and pd.notna(peg_median):
-        if peer_equity['PEG Ratio'].iloc[0] > peg_median * 1.05:
-            peer_over += weights['PEG Ratio']
-        elif peer_equity['PEG Ratio'].iloc[0] < peg_median * 0.95:
-            peer_under += weights['PEG Ratio']
-        else: peer_fair += weights['PEG Ratio']
-    peer_ev_ebitda = peer_equity['EV/EBITDA'].iloc[0]
-    if pd.notna(peer_ev_ebitda) and ev_ebitda_median is not None and pd.notna(ev_ebitda_median):
-        if peer_equity['EV/EBITDA'].iloc[0] > ev_ebitda_median * 1.05:
-            peer_over += weights['EV/EBITDA']
-        elif peer_equity['EV/EBITDA'].iloc[0] < ev_ebitda_median * 0.95:
-            peer_under += weights['EV/EBITDA']
-        else: peer_fair += weights['EV/EBITDA']
-    peer_ev_sales = peer_equity['EV/Sales'].iloc[0]
-    if pd.notna(peer_ev_sales) and ev_sales_median is not None and pd.notna(ev_sales_median):
-        if peer_equity['EV/Sales'].iloc[0] > ev_sales_median * 1.05:
-            peer_over += weights['EV/Sales']
-        elif peer_equity['EV/Sales'].iloc[0] < ev_sales_median * 0.95:
-            peer_under += weights['EV/Sales']
-        else: peer_fair += weights['EV/Sales']
-    peer_p_fcf = peer_equity['P/FCF'].iloc[0]
-    if pd.notna(peer_p_fcf) and p_fcf_median is not None and pd.notna(p_fcf_median):
-        if peer_equity['P/FCF'].iloc[0] > p_fcf_median * 1.05:
-            peer_over += weights['P/FCF']
-        elif peer_equity['P/FCF'].iloc[0] < p_fcf_median * 0.95:
-            peer_under += weights['P/FCF']
-        else: peer_fair += weights['P/FCF']
-    quality_good=0
-    quality_bad=0
-    quality_neutral=0
-    quality_weights=industry_quality_weight(stk)
-    if pd.notna(equity['ROA'].iloc[0]):
-        if equity['ROA'].iloc[0] >= 0.10:
-            quality_good += quality_weights['ROA']
-        elif equity['ROA'].iloc[0] < 0.05:
-            quality_bad += quality_weights['ROA']
-        else: quality_neutral += quality_weights['ROA']
+        peer_rows.append(build_valuation_ratios_row(ticker, peer_info, peer_fin, peer_bs, peer_cf))
+    peer = pd.DataFrame(peer_rows, columns=VALUATION_RATIO_COLUMNS)
+    peer = peer.dropna(subset=VALUATION_RATIO_COLUMNS[1:], how='all')
+    weights = industry_weight(stock)
+    return compute_peer_score(peer_equity, peer, weights)
 
-    if pd.notna(equity['ROIC'].iloc[0]):
-        if equity['ROIC'].iloc[0] >= 0.15:
-            quality_good += quality_weights['ROIC']
-        elif equity['ROIC'].iloc[0] < 0.08:
-            quality_bad += quality_weights['ROIC']
-        else: quality_neutral += quality_weights['ROIC']
+def classify_five_tier(value, labels, high, mid, neutral, low):
+    if value >= high:
+        return labels[0]
+    elif value >= mid:
+        return labels[1]
+    elif value > neutral:
+        return labels[2]
+    elif value > low:
+        return labels[3]
+    else:
+        return labels[4]
 
-    if pd.notna(equity['Asset Turnover'].iloc[0]):
-        if equity['Asset Turnover'].iloc[0] >= 1:
-            quality_good += quality_weights['Asset Turnover']
-        elif equity['Asset Turnover'].iloc[0] < 0.5:
-            quality_bad += quality_weights['Asset Turnover']
-        else: quality_neutral += quality_weights['Asset Turnover']
+def format_dcf_text(equity_dcf):
+    if equity_dcf is None:
+        return "DCF unavailable"
+    if equity_dcf >= 0:
+        return f"{equity_dcf:.2f}% undervalued by DCF"
+    return f"{abs(equity_dcf):.2f}% overvalued by DCF"
 
-    if pd.notna(equity['Receivable Stress'].iloc[0]):
-        if equity['Receivable Stress'].iloc[0] <= 0.1:
-            quality_good += quality_weights['Receivable Stress']
-        elif equity['Receivable Stress'].iloc[0] > 0.2:
-            quality_bad += quality_weights['Receivable Stress']
-        else: quality_neutral += quality_weights['Receivable Stress']
+def classify_verdict_peer(peer_score, quality_score, dcf_score, final_score):
+    if peer_score >= 0.15 and dcf_score >= 0.15 and quality_score >= 0.15:
+        if peer_score >= 0.50 and dcf_score >= 0.50 and quality_score >= 0.50:
+            return "High Conviction Undervalued", "The stock looks cheap relative to peers, business quality is strong, and DCF also supports strong upside."
+        return "Undervalued", "The stock looks attractively valued with supportive peer valuation, good quality, and positive DCF upside."
 
-    if pd.notna(equity['Inventory Stress'].iloc[0]):
-        if equity['Inventory Stress'].iloc[0] <= 0.1:
-            quality_good += quality_weights['Inventory Stress']
-        elif equity['Inventory Stress'].iloc[0] > 0.2:
-            quality_bad += quality_weights['Inventory Stress']
-        else: quality_neutral += quality_weights['Inventory Stress']
+    elif peer_score <= -0.15 and dcf_score <= -0.15 and quality_score >= 0.15:
+        return "Premium Quality, Rich Valuation", "The business quality is strong, but the stock is trading at a premium relative to peers and DCF does not support enough upside."
 
-    if pd.notna(equity['FCF Yield'].iloc[0]):
-        if equity['FCF Yield'].iloc[0] >= 0.05:
-            quality_good += quality_weights['FCF Yield']
-        elif equity['FCF Yield'].iloc[0] < 0.02:
-            quality_bad += quality_weights['FCF Yield']
-        else: quality_neutral += quality_weights['FCF Yield']
+    elif peer_score >= 0.15 and dcf_score >= 0.15 and quality_score <= -0.15:
+        return "Possible Value Trap", "The stock looks cheap on valuation, but business quality is weak. This may be a value trap."
 
-    if pd.notna(equity['Debt to Equity Ratio'].iloc[0]):
-        if equity['Debt to Equity Ratio'].iloc[0] <= 0.5:
-            quality_good += quality_weights['Debt to Equity Ratio']
-        elif equity['Debt to Equity Ratio'].iloc[0] > 1.5:
-            quality_bad += quality_weights['Debt to Equity Ratio']
-        else: quality_neutral += quality_weights['Debt to Equity Ratio']
+    elif peer_score <= -0.15 and dcf_score <= -0.15 and quality_score <= -0.15:
+        if peer_score <= -0.50 and dcf_score <= -0.50 and quality_score <= -0.50:
+            return "Strong Overvaluation Warning", "The stock looks expensive, business quality is weak, and DCF also points to significant downside."
+        return "Overvalued", "The stock appears expensive relative to peers and DCF, while business quality is also weak."
 
-    if pd.notna(equity['Interest Coverage'].iloc[0]):
-        if equity['Interest Coverage'].iloc[0] >= 5:
-            quality_good += quality_weights['Interest Coverage']
-        elif equity['Interest Coverage'].iloc[0] < 2:
-            quality_bad += quality_weights['Interest Coverage']
-        else: quality_neutral += quality_weights['Interest Coverage']
-    quality_total = quality_good + quality_bad + quality_neutral
-    peer_total = peer_under + peer_over + peer_fair
-    quality_score = (quality_good - quality_bad) / quality_total if quality_total != 0 else None
-    peer_score = (peer_under - peer_over) / peer_total if peer_total != 0 else None
-    dcf_score = max(-1, min(1, equity_dcf / 30)) if equity_dcf is not None else None
+    elif peer_score >= 0.15 and dcf_score <= -0.15:
+        if quality_score >= 0.15:
+            return "Mixed Signals - Premium vs DCF Conflict", "Peer valuation suggests upside, but DCF suggests downside. Business quality is supportive, so the case depends heavily on assumptions."
+        return "Mixed Signals - Weak Support", "Peer valuation and DCF are in conflict, and business quality is not strong enough to create confidence."
 
-    if peer_score is None or quality_score is None or dcf_score is None:
-        print(f"{stk.ticker}: Insufficient data for full interpretation.")
+    elif peer_score <= -0.15 and dcf_score >= 0.15:
+        if quality_score >= 0.15:
+            return "Premium Multiple but DCF-Supported", "The stock looks expensive relative to peers, but DCF still indicates upside and business quality is strong."
+        return "Mixed Signals", "DCF indicates upside, but peer valuation is rich and business quality is not strong."
 
     else:
-        final_score = 0.4 * peer_score + 0.2 * quality_score + 0.4 * dcf_score
+        if final_score >= 0.15:
+            return "Mild Positive / Mixed", "The stock has somewhat favorable signals overall, but not enough to call it clearly undervalued."
+        elif final_score <= -0.15:
+            return "Mild Negative / Mixed", "The stock has somewhat unfavorable signals overall, but not enough to call it clearly overvalued."
+        return "Fair / Inconclusive", "The stock appears roughly fairly valued or has mixed signals without a clear edge."
 
-        if equity_dcf >= 0:
-            dcf_text = f"{equity_dcf:.2f}% undervalued by DCF"
-        else:
-            dcf_text = f"{abs(equity_dcf):.2f}% overvalued by DCF"
-
-        if peer_score >= 0.50:
-            peer_label = "Strongly Undervalued vs Peers"
-        elif peer_score >= 0.15:
-            peer_label = "Undervalued vs Peers"
-        elif peer_score > -0.15:
-            peer_label = "Fairly Valued vs Peers"
-        elif peer_score > -0.50:
-            peer_label = "Overvalued vs Peers"
-        else:
-            peer_label = "Strongly Overvalued vs Peers"
-
-        if quality_score >= 0.50:
-            quality_label = "Strong Quality"
-        elif quality_score >= 0.15:
-            quality_label = "Good Quality"
-        elif quality_score > -0.15:
-            quality_label = "Average Quality"
-        elif quality_score > -0.50:
-            quality_label = "Weak Quality"
-        else:
-            quality_label = "Very Weak Quality"
-
-        if equity_dcf >= 30:
-            dcf_label = "Strongly Undervalued by DCF"
-        elif equity_dcf >= 15:
-            dcf_label = "Undervalued by DCF"
-        elif equity_dcf > -15:
-            dcf_label = "Fairly Valued by DCF"
-        elif equity_dcf > -30:
-            dcf_label = "Overvalued by DCF"
-        else:
-            dcf_label = "Strongly Overvalued by DCF"
-
-        if peer_score >= 0.15 and dcf_score >= 0.15 and quality_score >= 0.15:
-            if peer_score >= 0.50 and dcf_score >= 0.50 and quality_score >= 0.50:
-                final_label = "High Conviction Undervalued"
-                final_message = "The stock looks cheap relative to peers, business quality is strong, and DCF also supports strong upside."
-            else:
-                final_label = "Undervalued"
-                final_message = "The stock looks attractively valued with supportive peer valuation, good quality, and positive DCF upside."
-
-        elif peer_score <= -0.15 and dcf_score <= -0.15 and quality_score >= 0.15:
-            final_label = "Premium Quality, Rich Valuation"
-            final_message = "The business quality is strong, but the stock is trading at a premium relative to peers and DCF does not support enough upside."
-
-        elif peer_score >= 0.15 and dcf_score >= 0.15 and quality_score <= -0.15:
-            final_label = "Possible Value Trap"
-            final_message = "The stock looks cheap on valuation, but business quality is weak. This may be a value trap."
-
-        elif peer_score <= -0.15 and dcf_score <= -0.15 and quality_score <= -0.15:
-            if peer_score <= -0.50 and dcf_score <= -0.50 and quality_score <= -0.50:
-                final_label = "Strong Overvaluation Warning"
-                final_message = "The stock looks expensive, business quality is weak, and DCF also points to significant downside."
-            else:
-                final_label = "Overvalued"
-                final_message = "The stock appears expensive relative to peers and DCF, while business quality is also weak."
-
-        elif peer_score >= 0.15 and dcf_score <= -0.15:
-            if quality_score >= 0.15:
-                final_label = "Mixed Signals - Premium vs DCF Conflict"
-                final_message = "Peer valuation suggests upside, but DCF suggests downside. Business quality is supportive, so the case depends heavily on assumptions."
-            else:
-                final_label = "Mixed Signals - Weak Support"
-                final_message = "Peer valuation and DCF are in conflict, and business quality is not strong enough to create confidence."
-
-        elif peer_score <= -0.15 and dcf_score >= 0.15:
-            if quality_score >= 0.15:
-                final_label = "Premium Multiple but DCF-Supported"
-                final_message = "The stock looks expensive relative to peers, but DCF still indicates upside and business quality is strong."
-            else:
-                final_label = "Mixed Signals"
-                final_message = "DCF indicates upside, but peer valuation is rich and business quality is not strong."
-
-        else:
-            if final_score >= 0.15:
-                final_label = "Mild Positive / Mixed"
-                final_message = "The stock has somewhat favorable signals overall, but not enough to call it clearly undervalued."
-            elif final_score <= -0.15:
-                final_label = "Mild Negative / Mixed"
-                final_message = "The stock has somewhat unfavorable signals overall, but not enough to call it clearly overvalued."
-            else:
-                final_label = "Fair / Inconclusive"
-                final_message = "The stock appears roughly fairly valued or has mixed signals without a clear edge."
-
-        print(f"\n----- {stk.ticker} VALUATION SUMMARY -----")
-        print(f"Peer View       : {peer_label}")
-        print(f"Quality View    : {quality_label}")
-        print(f"DCF View        : {dcf_label} ({dcf_text})")
-        print(f"Peer Score      : {peer_score:.2f}")
-        print(f"Quality Score   : {quality_score:.2f}")
-        print(f"DCF Score       : {dcf_score:.2f}")
-        print(f"Final Score     : {final_score:.2f}")
-        print(f"Final Verdict   : {final_label}")
-        print(f"Interpretation  : {final_message}")
-
-
-else:
-    equity= pd.DataFrame(columns=['Ticker', 'DCF Valuation (%)', 'ROA', 'ROIC', 'Asset Turnover', 'Receivable Stress', 'Inventory Stress', 'FCF Yield', 'Debt to Equity Ratio', 'Interest Coverage'])
-    equity_dcf = discounted_cash_flow_calculator(stk, cf, fin, bs)
-    equity_roa, equity_roic, equity_asset_turnover, equity_receivable_stress, equity_inventory_stress = asset_quality_calculator(stk, cf, fin, bs)
-    equity_fcf_yield = fcf_yield_calculator(stk, cf)
-    equity_debt_to_equity = Debt_to_Equity_calculator(stk, bs)
-    equity_interest_coverage = interest_coverage_calculator(stk, fin)
-    new_row = {
-        'Ticker': stk.ticker,
-        'DCF Valuation (%)': equity_dcf,
-        'ROA': equity_roa,
-        'ROIC': equity_roic,
-        'Asset Turnover': equity_asset_turnover,
-        'Receivable Stress': equity_receivable_stress,
-        'Inventory Stress': equity_inventory_stress,
-        'FCF Yield': equity_fcf_yield,
-        'Debt to Equity Ratio': equity_debt_to_equity,
-        'Interest Coverage': equity_interest_coverage
-    }
-    equity = pd.concat([equity, pd.DataFrame([new_row])], ignore_index=True)
-    equity=equity.dropna(subset=['DCF Valuation (%)', 'ROA', 'ROIC', 'Asset Turnover', 'Receivable Stress', 'Inventory Stress', 'FCF Yield', 'Debt to Equity Ratio', 'Interest Coverage'], how='all')
-    quality_good=0
-    quality_bad=0
-    quality_neutral=0
-    quality_weights=industry_quality_weight(stk)
-    if pd.notna(equity['ROA'].iloc[0]):
-        if equity['ROA'].iloc[0] >= 0.10:
-            quality_good += quality_weights['ROA']
-        elif equity['ROA'].iloc[0] < 0.05:
-            quality_bad += quality_weights['ROA']
-        else: quality_neutral += quality_weights['ROA']
-
-    if pd.notna(equity['ROIC'].iloc[0]):
-        if equity['ROIC'].iloc[0] >= 0.15:
-            quality_good += quality_weights['ROIC']
-        elif equity['ROIC'].iloc[0] < 0.08:
-            quality_bad += quality_weights['ROIC']
-        else: quality_neutral += quality_weights['ROIC']
-
-    if pd.notna(equity['Asset Turnover'].iloc[0]):
-        if equity['Asset Turnover'].iloc[0] >= 1:
-            quality_good += quality_weights['Asset Turnover']
-        elif equity['Asset Turnover'].iloc[0] < 0.5:
-            quality_bad += quality_weights['Asset Turnover']
-        else: quality_neutral += quality_weights['Asset Turnover']
-
-    if pd.notna(equity['Receivable Stress'].iloc[0]):
-        if equity['Receivable Stress'].iloc[0] <= 0.1:
-            quality_good += quality_weights['Receivable Stress']
-        elif equity['Receivable Stress'].iloc[0] > 0.2:
-            quality_bad += quality_weights['Receivable Stress']
-        else: quality_neutral += quality_weights['Receivable Stress']
-
-    if pd.notna(equity['Inventory Stress'].iloc[0]):
-        if equity['Inventory Stress'].iloc[0] <= 0.1:
-            quality_good += quality_weights['Inventory Stress']
-        elif equity['Inventory Stress'].iloc[0] > 0.2:
-            quality_bad += quality_weights['Inventory Stress']
-        else: quality_neutral += quality_weights['Inventory Stress']
-
-    if pd.notna(equity['FCF Yield'].iloc[0]):
-        if equity['FCF Yield'].iloc[0] >= 0.05:
-            quality_good += quality_weights['FCF Yield']
-        elif equity['FCF Yield'].iloc[0] < 0.02:
-            quality_bad += quality_weights['FCF Yield']
-        else: quality_neutral += quality_weights['FCF Yield']
-
-    if pd.notna(equity['Debt to Equity Ratio'].iloc[0]):
-        if equity['Debt to Equity Ratio'].iloc[0] <= 0.5:
-            quality_good += quality_weights['Debt to Equity Ratio']
-        elif equity['Debt to Equity Ratio'].iloc[0] > 1.5:
-            quality_bad += quality_weights['Debt to Equity Ratio']
-        else: quality_neutral += quality_weights['Debt to Equity Ratio']
-
-    if pd.notna(equity['Interest Coverage'].iloc[0]):
-        if equity['Interest Coverage'].iloc[0] >= 5:
-            quality_good += quality_weights['Interest Coverage']
-        elif equity['Interest Coverage'].iloc[0] < 2:
-            quality_bad += quality_weights['Interest Coverage']
-        else: quality_neutral += quality_weights['Interest Coverage']
-    quality_total = quality_good + quality_bad + quality_neutral
-    quality_score = (quality_good - quality_bad) / quality_total if quality_total != 0 else None
-    dcf_score = max(-1, min(1, equity_dcf / 30)) if equity_dcf is not None else None
-    if quality_score is not None:
-        if quality_score >= 0.50:
-            quality_label = "Strong Quality"
-        elif quality_score >= 0.15:
-            quality_label = "Good Quality"
-        elif quality_score > -0.15:
-            quality_label = "Average Quality"
-        elif quality_score > -0.50:
-            quality_label = "Weak Quality"
-        else:
-            quality_label = "Very Weak Quality"
-    else:
-        quality_label = "Insufficient Data"
-    if equity_dcf is not None:
-        if equity_dcf >= 30:
-            dcf_label = "Strongly Undervalued by DCF"
-        elif equity_dcf >= 15:
-            dcf_label = "Undervalued by DCF"
-        elif equity_dcf > -15:
-            dcf_label = "Fairly Valued by DCF"
-        elif equity_dcf > -30:
-            dcf_label = "Overvalued by DCF"
-        else:
-            dcf_label = "Strongly Overvalued by DCF"
-    else:
-        dcf_label = "Insufficient Data" 
-    if quality_score is not None and dcf_score is not None:
-        non_peer_score = (0.4 * quality_score) + (0.6 * dcf_score)
-    else:
-        non_peer_score = None
+def classify_verdict_non_peer(equity_dcf, quality_score, non_peer_score):
     if non_peer_score is None:
-        non_peer_label = "Insufficient Data"
-        non_peer_message = "Not enough non-peer data to form a conclusion."
+        return "Insufficient Data", "Not enough non-peer data to form a conclusion."
 
     elif equity_dcf >= 15 and quality_score >= 0.15:
         if equity_dcf >= 30 and quality_score >= 0.50:
-            non_peer_label = "High Conviction Undervalued"
-            non_peer_message = "DCF shows strong upside and the business quality is strong."
-        else:
-            non_peer_label = "Undervalued"
-            non_peer_message = "DCF suggests upside and the business quality is supportive."
+            return "High Conviction Undervalued", "DCF shows strong upside and the business quality is strong."
+        return "Undervalued", "DCF suggests upside and the business quality is supportive."
 
     elif equity_dcf >= 15 and quality_score < -0.15:
-        non_peer_label = "Undervalued but Weak Quality"
-        non_peer_message = "DCF suggests upside, but weak business quality increases risk."
+        return "Undervalued but Weak Quality", "DCF suggests upside, but weak business quality increases risk."
 
     elif equity_dcf <= -15 and quality_score >= 0.15:
-        non_peer_label = "Premium Quality, Rich Valuation"
-        non_peer_message = "The business quality is good, but DCF suggests the stock is priced above intrinsic value."
+        return "Premium Quality, Rich Valuation", "The business quality is good, but DCF suggests the stock is priced above intrinsic value."
 
     elif equity_dcf <= -15 and quality_score < -0.15:
         if equity_dcf <= -30 and quality_score <= -0.50:
-            non_peer_label = "Strong Overvaluation Warning"
-            non_peer_message = "DCF suggests significant downside and business quality is weak."
-        else:
-            non_peer_label = "Overvalued"
-            non_peer_message = "DCF suggests downside and business quality is not supportive."
+            return "Strong Overvaluation Warning", "DCF suggests significant downside and business quality is weak."
+        return "Overvalued", "DCF suggests downside and business quality is not supportive."
 
     else:
         if non_peer_score >= 0.15:
-            non_peer_label = "Mild Positive / Mixed"
-            non_peer_message = "The non-peer signals are somewhat favorable, but not strongly enough."
+            return "Mild Positive / Mixed", "The non-peer signals are somewhat favorable, but not strongly enough."
         elif non_peer_score <= -0.15:
-            non_peer_label = "Mild Negative / Mixed"
-            non_peer_message = "The non-peer signals are somewhat unfavorable, but not strongly enough."
-        else:
-            non_peer_label = "Fair / Inconclusive"
-            non_peer_message = "DCF and quality together do not give a strong directional signal."   
-    if equity_dcf is not None:
-        if equity_dcf >= 0:
-            dcf_text = f"{equity_dcf:.2f}% undervalued by DCF"
-        else:
-            dcf_text = f"{abs(equity_dcf):.2f}% overvalued by DCF"
-    else:
-        dcf_text = "DCF unavailable"
+            return "Mild Negative / Mixed", "The non-peer signals are somewhat unfavorable, but not strongly enough."
+        return "Fair / Inconclusive", "DCF and quality together do not give a strong directional signal."
 
-    print(f"\n----- {stk.ticker} NON-PEER SUMMARY -----")
+def print_peer_summary(stock, peer_label, quality_label, dcf_label, dcf_text, peer_score, quality_score, dcf_score, final_score, final_label, final_message):
+    print(f"\n----- {stock.ticker} VALUATION SUMMARY -----")
+    print(f"Peer View       : {peer_label}")
+    print(f"Quality View    : {quality_label}")
+    print(f"DCF View        : {dcf_label} ({dcf_text})")
+    print(f"Peer Score      : {peer_score:.2f}")
+    print(f"Quality Score   : {quality_score:.2f}")
+    print(f"DCF Score       : {dcf_score:.2f}")
+    print(f"Final Score     : {final_score:.2f}")
+    print(f"Final Verdict   : {final_label}")
+    print(f"Interpretation  : {final_message}")
+
+def print_non_peer_summary(stock, quality_label, dcf_label, dcf_text, quality_score, dcf_score, non_peer_score, non_peer_label, non_peer_message):
+    print(f"\n----- {stock.ticker} NON-PEER SUMMARY -----")
     print(f"Quality View    : {quality_label}")
     print(f"DCF View        : {dcf_label} ({dcf_text})")
     print(f"Quality Score   : {quality_score:.2f}" if quality_score is not None else "Quality Score   : None")
     print(f"DCF Score       : {dcf_score:.2f}" if dcf_score is not None else "DCF Score       : None")
     print(f"Non-Peer Score  : {non_peer_score:.2f}" if non_peer_score is not None else "Non-Peer Score  : None")
     print(f"Final Verdict   : {non_peer_label}")
-    print(f"Interpretation  : {non_peer_message}")    
-print("\nWARNING: This model is a decision-support and screening tool, not a definitive valuation authority. Outputs depend on data quality, assumptions, and simplified rules, so results should always be cross-checked with company filings, earnings reports, industry context, and independent analysis before making any investment decision.")
+    print(f"Interpretation  : {non_peer_message}")
+
+QUALITY_LABELS = ("Strong Quality", "Good Quality", "Average Quality", "Weak Quality", "Very Weak Quality")
+PEER_LABELS = ("Strongly Undervalued vs Peers", "Undervalued vs Peers", "Fairly Valued vs Peers", "Overvalued vs Peers", "Strongly Overvalued vs Peers")
+DCF_LABELS = ("Strongly Undervalued by DCF", "Undervalued by DCF", "Fairly Valued by DCF", "Overvalued by DCF", "Strongly Overvalued by DCF")
+
+def compute_quality_score(stock, equity):
+    quality_weights, quality_thresholds = industry_quality_weight(stock)
+    quality_good, quality_bad, quality_neutral = score_quality_metrics(equity, quality_weights, quality_thresholds)
+    quality_total = quality_good + quality_bad + quality_neutral
+    return (quality_good - quality_bad) / quality_total if quality_total != 0 else None
+
+def run_peer_valuation(stock, peer_tickers, financials, balance_sheet, cashflow):
+    peer_score = compute_peer_relative_valuation(stock, peer_tickers, financials, balance_sheet, cashflow)
+    equity, equity_dcf = build_equity_dataframe(stock.ticker, stock, financials, balance_sheet, cashflow)
+    quality_score = compute_quality_score(stock, equity)
+    dcf_score = max(-1, min(1, equity_dcf / 30)) if equity_dcf is not None else None
+
+    if peer_score is None or quality_score is None or dcf_score is None:
+        print(f"{stock.ticker}: Insufficient data for full interpretation.")
+        return
+
+    final_score = 0.4 * peer_score + 0.2 * quality_score + 0.4 * dcf_score
+    dcf_text = format_dcf_text(equity_dcf)
+    peer_label = classify_five_tier(peer_score, PEER_LABELS, 0.50, 0.15, -0.15, -0.50)
+    quality_label = classify_five_tier(quality_score, QUALITY_LABELS, 0.50, 0.15, -0.15, -0.50)
+    dcf_label = classify_five_tier(equity_dcf, DCF_LABELS, 30, 15, -15, -30)
+    final_label, final_message = classify_verdict_peer(peer_score, quality_score, dcf_score, final_score)
+    print_peer_summary(stock, peer_label, quality_label, dcf_label, dcf_text, peer_score, quality_score, dcf_score, final_score, final_label, final_message)
+
+def run_non_peer_valuation(stock, financials, balance_sheet, cashflow):
+    equity, equity_dcf = build_equity_dataframe(stock.ticker, stock, financials, balance_sheet, cashflow)
+    quality_score = compute_quality_score(stock, equity)
+    dcf_score = max(-1, min(1, equity_dcf / 30)) if equity_dcf is not None else None
+    quality_label = classify_five_tier(quality_score, QUALITY_LABELS, 0.50, 0.15, -0.15, -0.50) if quality_score is not None else "Insufficient Data"
+    dcf_label = classify_five_tier(equity_dcf, DCF_LABELS, 30, 15, -15, -30) if equity_dcf is not None else "Insufficient Data"
+    non_peer_score = (0.4 * quality_score) + (0.6 * dcf_score) if quality_score is not None and dcf_score is not None else None
+    non_peer_label, non_peer_message = classify_verdict_non_peer(equity_dcf, quality_score, non_peer_score)
+    dcf_text = format_dcf_text(equity_dcf)
+    print_non_peer_summary(stock, quality_label, dcf_label, dcf_text, quality_score, dcf_score, non_peer_score, non_peer_label, non_peer_message)
+
+def main():
+    if peers is not None and len(peers) > 0:
+        run_peer_valuation(stk, peers, fin, bs, cf)
+    else:
+        run_non_peer_valuation(stk, fin, bs, cf)
+    print("\nWARNING: This model is a decision-support and screening tool, not a definitive valuation authority. Outputs depend on data quality, assumptions, and simplified rules, so results should always be cross-checked with company filings, earnings reports, industry context, and independent analysis before making any investment decision.")
+
+if __name__ == "__main__":
+    main()

@@ -125,6 +125,7 @@ The model follows a broad pipeline like this:
     python valuator.py
     ```
 Enter a US ticker (e.g. `AAPL`) or an Indian ticker with the `.NS` suffix (e.g. `RELIANCE.NS`) when prompted.  
+
 ---
 
 ## Disclaimer

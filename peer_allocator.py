@@ -45,4 +45,3 @@ else:
                 peers.append(peer_info.ticker)
             elif peer_mark_cap < 300_000_000 and mark_cap < 300_000_000:
                 peers.append(peer_info.ticker)
-print(peers)

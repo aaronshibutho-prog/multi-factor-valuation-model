@@ -1,13 +1,25 @@
 import pandas as pd
+import yfinance as yf
+import time
 
-india_industries = set(pd.read_excel('industry_ticks_india.xlsx')['Industry'].dropna())
-weighted_industries = set(pd.read_excel('industry_ticks_weighted.xlsx')['Industry'])
-quality_industries = set(pd.read_excel('industry_quality_weights.xlsx')['Industry'])
+df = pd.read_csv('indian_equities.csv')
+df.columns = df.columns.str.strip()
+df = df[df['SERIES'].str.strip() == 'EQ']
+df['Ticker'] = df['SYMBOL'].str.strip() + '.NS'
+symbols = df['Ticker'].tolist()
 
-missing_from_weighted = india_industries - weighted_industries
-missing_from_quality = india_industries - quality_industries
+results = []
+print("Fetching industry data for Indian equities...")
+for i, sym in enumerate(symbols):
+    try:
+        industry = yf.Ticker(sym).info.get('industry')
+        if industry is not None:
+            results.append({'Symbol': sym, 'Industry': industry, 'Market': 'IN'})
+    except:
+        continue
+    if i % 100 == 0:
+        print(f"{i}/{len(symbols)} processed")
 
-print(f"Indian industries missing peer weights: {len(missing_from_weighted)}")
-print(missing_from_weighted)
-print(f"\nIndian industries missing quality weights: {len(missing_from_quality)}")
-print(missing_from_quality)
+df_out = pd.DataFrame(results)
+df_out.to_excel('industry_ticks_india.xlsx', index=False)
+print(len(results))

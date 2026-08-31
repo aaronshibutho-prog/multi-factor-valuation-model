@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.pyo
+*.xlsx
+!industry_ticks.xlsx
+!industry_ticks_weighted.xlsx
+!industry_quality_weights.xlsx
+.DS_Store
+*.egg-info/
+venv/
+.env

@@ -95,6 +95,17 @@ def resolve_quality_thresholds(archetype):
     profile = QUALITY_THRESHOLD_PROFILES.get(profile_name, STANDARD_QUALITY_THRESHOLDS)
     return {**STANDARD_QUALITY_THRESHOLDS, **profile}
 
+def resolve_stock_archetype_profile(stock):
+    industry = stock.info.get('industry')
+    try:
+        weight_df = pd.read_excel('industry_quality_weights.xlsx')
+    except Exception:
+        return "standard"
+    row = weight_df[weight_df['Industry'] == industry]
+    if row.empty:
+        return "standard"
+    return ARCHETYPE_QUALITY_PROFILE.get(row["Archetype"].iloc[0], "standard")
+
 def industry_quality_weight(stock):
     industry=stock.info.get('industry')
     weight_df = pd.read_excel('industry_quality_weights.xlsx')
@@ -313,7 +324,130 @@ def estimate_growth_rate(stock, financials):
             growth_rate = 0.08
     return min(growth_rate, 0.12)
 
+def calculate_cost_of_equity(stock):
+    r_f = get_risk_free_rate(stock)
+    equity_risk_premium = 0.045
+    beta = stock.info.get('beta')
+    if beta is not None and pd.notna(beta):
+        return r_f + beta * equity_risk_premium
+    sp500 = yf.Ticker("^GSPC")
+    market_return = sp500.history(period="5y")["Close"].resample('ME').last().pct_change()
+    stock_return = stock.history(period="5y")["Close"].resample('ME').last().pct_change()
+    df = pd.concat([stock_return, market_return], axis=1).dropna()
+    df.columns = ["stock_return", "market_return"]
+    beta = df["stock_return"].cov(df["market_return"]) / df["market_return"].var()
+    return r_f + beta * equity_risk_premium
+
+def get_current_market_price(stock):
+    if stock.info.get("currentPrice") is not None and pd.notna(stock.info.get("currentPrice")):
+        return stock.info.get("currentPrice")
+    elif stock.fast_info.get("lastPrice") is not None and pd.notna(stock.fast_info.get("lastPrice")):
+        return stock.fast_info.get("lastPrice")
+    return stock.history(period="1d")['Close'].iloc[-1]
+
+def estimate_dividend_growth_rate(stock, financials, cashflow, balance_sheet):
+    try:
+        net_income = financials.loc['Net Income Common Stockholders'].iloc[0]
+        if pd.isna(net_income):
+            net_income = None
+    except (KeyError, IndexError):
+        net_income = None
+    if net_income is None:
+        try:
+            net_income = financials.loc['Net Income'].iloc[0]
+            if pd.isna(net_income):
+                net_income = None
+        except (KeyError, IndexError):
+            net_income = None
+
+    try:
+        dividends_paid = abs(cashflow.loc['Cash Dividends Paid'].iloc[0])
+        if pd.isna(dividends_paid):
+            dividends_paid = None
+    except (KeyError, IndexError):
+        dividends_paid = None
+
+    if dividends_paid is not None and net_income is not None and net_income > 0:
+        payout_ratio = dividends_paid / net_income
+    elif stock.info.get('payoutRatio') is not None and pd.notna(stock.info.get('payoutRatio')):
+        payout_ratio = stock.info.get('payoutRatio')
+    else:
+        payout_ratio = None
+
+    try:
+        stockholders_equity = balance_sheet.loc['Stockholders Equity'].iloc[0]
+        if pd.isna(stockholders_equity) or stockholders_equity <= 0:
+            stockholders_equity = None
+    except (KeyError, IndexError):
+        stockholders_equity = None
+
+    if net_income is not None and stockholders_equity is not None:
+        roe = net_income / stockholders_equity
+    elif stock.info.get('returnOnEquity') is not None and pd.notna(stock.info.get('returnOnEquity')):
+        roe = stock.info.get('returnOnEquity')
+    else:
+        roe = None
+
+    if roe is not None and payout_ratio is not None and pd.notna(roe) and pd.notna(payout_ratio):
+        growth_rate = roe * (1 - payout_ratio)
+    else:
+        growth_rate = None
+
+    if growth_rate is None or growth_rate <= 0:
+        growth_rate = 0.08
+    return min(growth_rate, 0.12)
+
+def dividend_discount_model_calculator(stock, cashflow, financials, balance_sheet):
+    shares_outstanding = stock.info.get("sharesOutstanding")
+    if shares_outstanding is None or not pd.notna(shares_outstanding) or shares_outstanding <= 0:
+        return None
+
+    dividend_per_share = stock.info.get('dividendRate')
+    if dividend_per_share is None or not pd.notna(dividend_per_share) or dividend_per_share <= 0:
+        try:
+            dividends_paid = abs(cashflow.loc['Cash Dividends Paid'].iloc[0])
+            if pd.notna(dividends_paid) and dividends_paid > 0:
+                dividend_per_share = dividends_paid / shares_outstanding
+            else:
+                dividend_per_share = None
+        except (KeyError, IndexError):
+            dividend_per_share = None
+    if dividend_per_share is None or not pd.notna(dividend_per_share) or dividend_per_share <= 0:
+        return None
+
+    cost_of_equity = calculate_cost_of_equity(stock)
+    discount_rate = cost_of_equity
+    terminal_growth_rate = 0.025
+    if discount_rate <= terminal_growth_rate:
+        return None
+
+    growth_rate = estimate_dividend_growth_rate(stock, financials, cashflow, balance_sheet)
+    min_spread = 0.02
+    growth_rate = min(growth_rate, cost_of_equity - min_spread)
+    if cost_of_equity - growth_rate < min_spread:
+        return None
+
+    projection_years = 5
+    projected_dividends = []
+    pv = []
+    for i in range(1, projection_years + 1):
+        projected_dividends.append(dividend_per_share * (1 + growth_rate) ** i)
+        pv.append(projected_dividends[i - 1] / (1 + discount_rate) ** i)
+    tv = projected_dividends[-1] * (1 + terminal_growth_rate) / (discount_rate - terminal_growth_rate)
+    pv.append(tv / (1 + discount_rate) ** projection_years)
+    intrinsic_value_per_share = sum(pv)
+
+    market_price = get_current_market_price(stock)
+    if market_price is None or not pd.notna(market_price) or market_price <= 0:
+        return None
+    return ((intrinsic_value_per_share - market_price) / market_price) * 100
+
 def discounted_cash_flow_calculator(stock, cashflow, financials, balance_sheet):
+    if resolve_stock_archetype_profile(stock) == "leverage_financial":
+        ddm_valuation = dividend_discount_model_calculator(stock, cashflow, financials, balance_sheet)
+        if ddm_valuation is not None:
+            return ddm_valuation
+        print(f"Note: DDM unavailable for {stock.ticker} (no dividend data) — falling back to FCFE/FCFF DCF.")
     free_cash_flow_to_equity = None
     free_cash_flow_to_firm = None
     try:
@@ -354,19 +488,7 @@ def discounted_cash_flow_calculator(stock, cashflow, financials, balance_sheet):
             except:
                 free_cash_flow_to_firm=None
     if free_cash_flow_to_equity is not None and pd.notna(free_cash_flow_to_equity):
-        r_f = get_risk_free_rate(stock)
-        equity_risk_premium=0.045
-        beta=stock.info.get('beta')
-        if beta is not None and pd.notna(beta):
-            cost_of_equity=r_f + beta * equity_risk_premium
-        else:
-            sp500=yf.Ticker("^GSPC")
-            market_return=sp500.history(period="5y")["Close"].resample('ME').last().pct_change()
-            stock_return=stock.history(period="5y")["Close"].resample('ME').last().pct_change()
-            df= pd.concat([stock_return, market_return], axis=1).dropna()
-            df.columns=["stock_return", "market_return"]
-            beta=df["stock_return"].cov(df["market_return"]) / df["market_return"].var()
-            cost_of_equity=r_f + beta * equity_risk_premium
+        cost_of_equity = calculate_cost_of_equity(stock)
         discount_rate=cost_of_equity
         growth_rate = estimate_growth_rate(stock, financials)
         terminal_growth_rate = 0.025
@@ -382,11 +504,7 @@ def discounted_cash_flow_calculator(stock, cashflow, financials, balance_sheet):
         shares_outstanding = stock.info.get("sharesOutstanding")
         if shares_outstanding is not None and shares_outstanding > 0 and pd.notna(shares_outstanding):
             intrinsic_value_per_share = equity_value / shares_outstanding
-        if stock.info.get("currentPrice") is not None and pd.notna(stock.info.get("currentPrice")):
-            market_price=stock.info.get("currentPrice")
-        elif stock.fast_info.get("lastPrice") is not None and pd.notna(stock.fast_info.get("lastPrice")):
-            market_price=stock.fast_info.get("lastPrice")
-        else: market_price=stock.history(period="1d")['Close'].iloc[-1]
+        market_price = get_current_market_price(stock)
         if intrinsic_value_per_share is not None and market_price is not None and market_price > 0:
             dcf_valuation= ((intrinsic_value_per_share- market_price) / market_price) *100
         return dcf_valuation
@@ -404,19 +522,7 @@ def discounted_cash_flow_calculator(stock, cashflow, financials, balance_sheet):
         if (market_capital + total_debt) > 0:
             equity_weight= market_capital / (market_capital + total_debt)
             debt_weight= total_debt / (market_capital + total_debt)
-        r_f = get_risk_free_rate(stock)
-        equity_risk_premium=0.045
-        beta=stock.info.get('beta')
-        if beta is not None and pd.notna(beta):
-            cost_of_equity=r_f + beta * equity_risk_premium
-        else:
-            sp500=yf.Ticker("^GSPC")
-            market_return=sp500.history(period="5y")["Close"].resample('ME').last().pct_change()
-            stock_return=stock.history(period="5y")["Close"].resample('ME').last().pct_change()
-            df= pd.concat([stock_return, market_return], axis=1).dropna()
-            df.columns=["stock_return", "market_return"]
-            beta=df["stock_return"].cov(df["market_return"]) / df["market_return"].var()
-            cost_of_equity=r_f + beta * equity_risk_premium
+        cost_of_equity = calculate_cost_of_equity(stock)
         wacc= (equity_weight * cost_of_equity) + (debt_weight * after_tax_cost_of_debt)
         discount_rate=wacc
         growth_rate = estimate_growth_rate(stock, financials)
@@ -434,12 +540,7 @@ def discounted_cash_flow_calculator(stock, cashflow, financials, balance_sheet):
         shares_outstanding = stock.info.get("sharesOutstanding")
         if shares_outstanding is not None and shares_outstanding > 0 and pd.notna(shares_outstanding):
             intrinsic_value_per_share = equity_value / shares_outstanding
-        if stock.info.get("currentPrice") is not None and pd.notna(stock.info.get("currentPrice")):
-            market_price=stock.info.get("currentPrice")
-        elif stock.fast_info.get("lastPrice") is not None and pd.notna(stock.fast_info.get("lastPrice")):
-            market_price=stock.fast_info.get("lastPrice")
-        else:
-            market_price=stock.history(period="1d")['Close'].iloc[-1]
+        market_price = get_current_market_price(stock)
         if intrinsic_value_per_share is not None and market_price is not None and market_price > 0:
             dcf_valuation= ((intrinsic_value_per_share- market_price) / market_price) *100
         return dcf_valuation
